@@ -68,7 +68,7 @@ public class TranspHandler : MonoBehaviour
 	private const int  GWL_EXSTYLE       = -0x00000014;
 	private const int  SW_HIDE           =  0x00000000;
 	private const int  SW_SHOW           =  0x00000005;
-	private const int  LWA_ALPHA		 =  0x00000002;
+	private const int  LWA_ALPHA         =  0x00000002;
 	private const int  WS_EX_APPWINDOW   =  0x00040000;
 	private const int  WS_EX_TOOLWINDOW  =  0x00000080;
 	private const int  SWP_FRAMECHANGED  =  0x00000020;
