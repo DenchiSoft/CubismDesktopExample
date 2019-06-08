@@ -7,6 +7,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Moves/Rotates/Animates hand.
+/// Also does some character animation control stuff.
 /// </summary>
 public class Hand : MonoBehaviour {
 	// Current mouse positon in window
@@ -55,15 +56,16 @@ public class Hand : MonoBehaviour {
 	private CubismParameter paramX;
 	private CubismParameter paramY;
 
+	private CubismParameter nnaa;
+	private CubismParameter angry;
+	private CubismParameter eyeSpin;
+	private CubismParameter moveX;
+
 	// Audio stuff.
-	private AudioSource clickAudio;
 	public AudioClip squishClip;
 
 	// The hand image. Needed for fading in/out.
 	private RawImage img;
-
-	// Is the character currently sleeping? Is set by animation.
-	private bool sleeping = false;
 
 	// Some variables for controlling wobble/squish state, amount and direction.
 	private float wobbleCounter = 0;
@@ -78,18 +80,32 @@ public class Hand : MonoBehaviour {
 	// Window transparency handler.
 	private TranspHandler transpHandler;
 
+	// Click counter. Is reset every 2 seconds.
+	private int clickCounter = 0;
+
+	// Is the character annoyed?  Happens when you click a lot.
+	private bool annoyed = false;
+	private bool prevAnnoyed = false;
+
+	// Tray icon.
+	public System.Windows.Forms.Tray tray;
+
+	// Animation weights.
+	private float angryAmount = 0;
+	private float spinEyeAmount = 0;
+	private float nnaaaAmount = 0;
+
 	// Use this for initialization
 	void Start () {
 		// References to stuff.
 		handAnimator = GetComponent<Animator>();
-		clickAudio = GetComponent<AudioSource>();
 		img = GetComponent<RawImage>();
 		transpHandler = GameObject.FindObjectOfType<TranspHandler>();
 		pt = transform.parent.transform;
 		startTime = Time.time;
 	
 		// Find model.
-		model = GameObject.Find("Hideri_L2D").GetComponent<CubismModel>();
+		model = GameObject.Find("Nanachi_L2D").GetComponent<CubismModel>();
 		charAnimator = model.gameObject.GetComponent<Animator>();
 
 		// Get parameters we want to directly controll.
@@ -106,12 +122,23 @@ public class Hand : MonoBehaviour {
 				paramX = p;
 			} else if (p.Id == "ParamAngleY") {
 				paramY = p;
+			} else if (p.Id == "ParamNnaaa") {
+				nnaa = p;
+			} else if (p.Id == "ParamAngry") {
+				angry = p;
+			} else if (p.Id == "ParamSpinEyes") {
+				eyeSpin = p;
+			} else if (p.Id == "ParamMoveX") {
+				moveX = p;
 			} else {
 				//...
 			}
 		}
+
+		// Start click counter.
+		InvokeRepeating("CheckClickCount", 0, 2);
 	}
-	
+		
 	// Update is called once per frame
 	void Update () {
 		// Move hand towards mouse pointer.
@@ -132,9 +159,15 @@ public class Hand : MonoBehaviour {
 		pt.localEulerAngles = new Vector3(0, 0, baseRotation - angle);
 			
 		// Fade in hand sprite.
-		if (img.color.a < maximum) {
+		if (tray.handVisible() && img.color.a < maximum) {
 			float t = (Time.time - startTime) / duration;
 			img.color = new Color(1f, 1f, 1f, Mathf.SmoothStep(minimum, maximum, t));
+		} else {
+			if (tray.handVisible()) {
+				img.color = new Color(1f, 1f, 1f, maximum);
+			} else {
+				img.color = new Color(1f, 1f, 1f, 0f);
+			}
 		}
 
 		// Check for mouse down event without left CTRL pressed.
@@ -154,16 +187,34 @@ public class Hand : MonoBehaviour {
 				handAnimator.SetTrigger("clicking");
 				charAnimator.SetTrigger("poke");
 
-				// Wake up character.
-				sleeping = false;
-
 				// Stat wobble.
 				startWobble(mousePosition);
+
+				// Increase click counter.
+				clickCounter++;
 			}
 		} else if (Input.GetKey(KeyCode.LeftControl)) {
 			// While CTRL is pressed, remove hand.
 			img.color = new Color(1f, 1f, 1f, 0f);
 		}
+	}
+
+	// Check if character was clicked enough to annoy them every 2 seconds.
+	private void CheckClickCount() {
+		if (!annoyed && clickCounter > 8) {
+			annoyed = true;
+		} else if (annoyed && clickCounter <= 8) {
+			annoyed = false;
+		}
+
+		clickCounter = 0;
+	}
+
+	/// <summary>
+	/// Return annoyed state of character.
+	/// </summary>
+	public bool getAnnoyed() {
+		return annoyed;
 	}
 
 	// Removes squish audio source after it's no longer needed.
@@ -187,6 +238,7 @@ public class Hand : MonoBehaviour {
 
 			eyeOpenL.BlendToValue(CubismParameterBlendMode.Override, 1 - wobbleMagnitude - 0.5f);
 			eyeOpenR.BlendToValue(CubismParameterBlendMode.Override, 1 - wobbleMagnitude - 0.5f);
+
 		} else {
 			if (fadeBack > 0.01) {
 				// Otherwise slowly fade back to the values given by the animation.
@@ -206,6 +258,57 @@ public class Hand : MonoBehaviour {
 			} else {
 				fadeBack = 0;
 			}
+		}
+
+		// Time "Nnaaa" and "angry sign" animation.
+		if (annoyed) {
+			if (angryAmount <= 1) {
+				angryAmount += 0.073f;
+			}
+
+			if (!prevAnnoyed) {
+				nnaaaAmount = 0f;
+			}
+
+			nnaaaAmount += 0.0073f;
+		} else {
+			if (angryAmount >= 0) {
+				angryAmount -= 0.025f;
+			}
+
+			nnaaaAmount += 0.007f;
+		}
+
+		if (angryAmount <= 0) {
+			nnaaaAmount = 0;
+		}
+
+		prevAnnoyed = annoyed;
+
+		// Check if dizzy animation should be played.
+		if (transpHandler.getDizzy()) {
+			if (spinEyeAmount <= 1) {
+				spinEyeAmount += 0.07f;
+			}
+		} else {
+			if (spinEyeAmount >= 0) {
+				spinEyeAmount -= 0.025f;
+			}
+		}
+
+		// Set new parameter values.
+		eyeSpin.BlendToValue(CubismParameterBlendMode.Override, spinEyeAmount);
+		angry.BlendToValue(CubismParameterBlendMode.Override, angryAmount);
+		nnaa.BlendToValue(CubismParameterBlendMode.Override, nnaaaAmount);
+
+		if (wobbleMagnitude > 0.01f) {
+			float tempWobble = wobbleMagnitude * wobbleDir.x * (-1.71f);
+			tempWobble = Mathf.Clamp(tempWobble, -1, 1);
+			moveX.BlendToValue(CubismParameterBlendMode.Override, tempWobble);
+		} else {
+			float xSpeed = transpHandler.getXSpeed() / 27f;
+			xSpeed = Mathf.Clamp(xSpeed, -1, 1);
+			moveX.BlendToValue(CubismParameterBlendMode.Override, -xSpeed);
 		}
 	}
 
@@ -231,11 +334,5 @@ public class Hand : MonoBehaviour {
 			wobbleCounter+= 0.328f;
 			wobbleMagnitude -= 0.025f;
 		}
-	}
-
-	// Called about 1 second into the sleeping animation by the animation itself (animation event).
-	// The sleeping animation autoplays after the awake animation unless the character was clicked.
-	public void sleepingActive() {
-		sleeping = true;
 	}
 }

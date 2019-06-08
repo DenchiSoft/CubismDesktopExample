@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
-using UnityEngine.Events;
 
 /// <summary>
 /// This class takes care of window styling (removing borders), window transparency
@@ -85,6 +84,7 @@ public class TranspHandler : MonoBehaviour
 
 	// Window position (top left window corner)
 	private Vector2 pos;
+	private Vector2 postLastFrame;
 
 	// Window size (width/height) in pixel.
 	private Vector2 winSize;
@@ -106,23 +106,37 @@ public class TranspHandler : MonoBehaviour
 	// Did the last raycast hit anything?
 	private bool raycastHit = false;
 
-	// Sets window to pass through clicks.
-	private void SetInactive() {
-		#if !UNITY_EDITOR
-		SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-		SetWindowLong (hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT); 
-		SetLayeredWindowAttributes (hwnd, 0, 255, LWA_ALPHA);
-		SetWindowPos(hwnd, HWND_TOPMOST, (int) pos.x, (int) pos.y, (int) (fWidth * multiplier), (int) (fHeight * multiplier), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-		#endif
-	}
+	// This has the position of all windows.
+	public WindowPosManager windowPosManager;
 
-	// Sets window to consume clicks.
-	private void SetActive() {
-		#if !UNITY_EDITOR
-		SetWindowLong (hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW | ~((WS_EX_LAYERED) | (WS_EX_TRANSPARENT)));
-		SetWindowPos(hwnd, HWND_TOPMOST,  (int) pos.x, (int) pos.y, (int) (fWidth * multiplier), (int) (fHeight * multiplier), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-		#endif
-	}
+	// Distance of ground indicator rect points to left bottom of window (in pixel).
+	private Vector2 groundIndicatorTopLeft;
+	private Vector2 groundIndicatorTopRight;
+
+	// Minimal distance to lock onto a window (in pixel).
+	private const int windowLockMinDist = 17;
+
+	// Window the character is currently locked to. NULL if none.
+	private WindowInfo window;
+
+	// Position of locked window in last frame. Top right is not used.
+	private Vector2 windowTopLeftLastFrame;
+	// private Vector2 windowTopRightLastFrame;
+
+	// Ground renderer. Only needed to get sprite extents.
+	public SpriteRenderer groundIndicatorRenderer;
+
+	// Tray icon.
+	public System.Windows.Forms.Tray tray;
+
+	// Distance the character has been moved. Gets added up each frame and reset every 2 seconds.
+	private float distanceTraveled = 0;
+
+	// This indicated fast movement, meaning the character would be dizzy.
+	private bool dizzy = false;
+
+	// Movement speed of character, which triggers dizzy state.
+	private float xSpeed = 0;
 
 	void Start()
 	{
@@ -147,10 +161,24 @@ public class TranspHandler : MonoBehaviour
 		DwmExtendFrameIntoClientArea(hwnd, ref margins);
 		Application.runInBackground = true;
 		#endif
+
+		// Check traveled distance every 2 seconds.
+		InvokeRepeating("CheckDistance", 0, 2);
 	}
 
 	void Update ()
 	{
+		if (tray.quitClicked()) {
+			CancelInvoke("CheckDistance");
+			return;
+		}
+		
+		// Calculate ground indicator top line position.
+		Vector3 min = mainCamera.WorldToScreenPoint(groundIndicatorRenderer.bounds.min);
+		Vector3 max = mainCamera.WorldToScreenPoint(groundIndicatorRenderer.bounds.max);
+
+		groundIndicatorTopLeft = new Vector2(min.x, max.y);
+		groundIndicatorTopRight = new Vector2(max.x, max.y);
 
 		// Shoot a raycast through the mouse position and see if it hits anything (2D colliders).
 		RaycastHit2D hit; 
@@ -210,15 +238,83 @@ public class TranspHandler : MonoBehaviour
 			}
 		}
 
+		// If the character is locked to a window, check if it has moved.
+		if (!startDrag && window != null) {
+			MoveWithWindow();
+		}
+
 		// Clamp size multiplier between min/max.
 		multiplier = Mathf.Clamp(multiplier, multLower, multUpper);
+	}
+		
+	// Sets window to pass through clicks.
+	private void SetInactive() {
+		distanceTraveled += Vector2.Distance(postLastFrame, pos);
+		xSpeed = postLastFrame.x - pos.x;
+		postLastFrame = pos;
+		#if !UNITY_EDITOR
+		SetWindowLong(hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+		SetWindowLong (hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT); 
+		SetLayeredWindowAttributes (hwnd, 0, 255, LWA_ALPHA);
+		SetWindowPos(hwnd, HWND_TOPMOST, (int) pos.x, (int) pos.y, (int) (fWidth * multiplier), (int) (fHeight * multiplier), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+		#endif
+	}
+
+	// Sets window to consume clicks.
+	private void SetActive() {
+		distanceTraveled += Vector2.Distance(postLastFrame, pos);
+		xSpeed = postLastFrame.x - pos.x;
+		postLastFrame = pos;
+		#if !UNITY_EDITOR
+		SetWindowLong (hwnd, GWL_EXSTYLE, WS_EX_TOOLWINDOW | ~((WS_EX_LAYERED) | (WS_EX_TRANSPARENT)));
+		SetWindowPos(hwnd, HWND_TOPMOST,  (int) pos.x, (int) pos.y, (int) (fWidth * multiplier), (int) (fHeight * multiplier), SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+		#endif
+	}
+
+	// Checks traveled distance every 2 seconds and sets character
+	// to dizzy state if it's over a certain limit.
+	private void CheckDistance() {
+		if (distanceTraveled > 2850) {
+			dizzy = true;
+		} else {
+			dizzy = false;
+		}
+
+		distanceTraveled = 0;
+	}
+
+	/// <summary>
+	/// Returns movement speed in X direction.
+	/// </summary>
+	/// <returns>The X direction speed.</returns>
+	public float getXSpeed() {
+		return xSpeed;
 	}
 
 	// Set new window center position to mouse pointer.
 	private void MoveToCursor() {
 		pos = GetCursorPosition();
-		pos.x -= (fWidth  * multiplier / 2);
-		pos.y -= (fHeight * multiplier / 2);
+
+		// Move to center.
+		pos.x -= fWidth  * multiplier / 2;
+		pos.y -= fHeight * multiplier / 2;
+
+		// Reser locked window.
+		window = null;
+
+		// Check if a window is close enough to dock.
+		foreach (WindowInfo w in windowPosManager.windows) {
+			int yDist = (int) (pos.y + fHeight * multiplier - groundIndicatorTopLeft.y - w.m_TopLeft.y);
+			int lDist = (int) (pos.x + groundIndicatorTopLeft.x - w.m_TopLeft.x);
+			int rDist = (int) (pos.x + groundIndicatorTopRight.x - w.m_TopRight.x);
+
+			if (Mathf.Abs(yDist) < windowLockMinDist && lDist > 0 && rDist < 0) {
+				pos.y -= yDist;
+				window = w;
+				windowTopLeftLastFrame = w.m_TopLeft;
+				//windowTopRightLastFrame = w.m_TopRight;
+			}
+		}
 
 		// Update window state.
 		SetActive();
@@ -234,6 +330,25 @@ public class TranspHandler : MonoBehaviour
 
 		// Update window state.
 		SetActive();
+	}
+
+	// Move the character along with the window if the character is locked to a window.
+	private void MoveWithWindow() {
+		Vector2 topLeftDistance = windowTopLeftLastFrame - window.m_TopLeft;
+		if (topLeftDistance.sqrMagnitude > 0.0001f) {
+			pos -= topLeftDistance;
+			windowTopLeftLastFrame = window.m_TopLeft;
+
+			SetInactive();
+		}
+	}
+
+	/// <summary>
+	/// Returns true if character should be dizzy.
+	/// </summary>
+	/// <returns><c>true</c>, if dizzy was gotten, <c>false</c> otherwise.</returns>
+	public bool getDizzy() {
+		return dizzy;
 	}
 
 	/// <summary>
