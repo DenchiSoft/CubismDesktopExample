@@ -4,8 +4,6 @@
 /[Bb]uild/
 /[Bb]uilds/
 /Assets/AssetStoreTools*
-/Assets/Live2D/
-/Assets/Plugins/
 /bin/
 
 # Visual Studio 2015 cache directory
